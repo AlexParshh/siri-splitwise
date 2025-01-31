@@ -6,6 +6,11 @@ from server import process_transaction, delete_expense
 pytest.mark.one_person = pytest.mark.one_person
 pytest.mark.multi_person = pytest.mark.multi_person
 
+class TestConfig:
+    """Global test configuration to store friend names."""
+    friend1 = None
+    friend2 = None
+
 def create_and_verify_expense(message):
     """Helper function to test a transaction and clean up afterward."""
     # Process the transaction
@@ -32,7 +37,7 @@ def test_split_with_one_person():
     # Test equal split
     print("\nTesting equal split...")
     expense = create_and_verify_expense(
-        "Split $30 dinner evenly with Ben"
+        f"Split $30 dinner evenly with {TestConfig.friend1}"
     )
     assert len(expense.users) == 2
     assert all(float(user.owed_share) == 15.0 for user in expense.users)
@@ -40,7 +45,7 @@ def test_split_with_one_person():
     # Test percentage split
     print("\nTesting percentage split...")
     expense = create_and_verify_expense(
-        "Split $100 with Ben where I pay 60 percent and he pays 40 percent"
+        f"Split $100 with {TestConfig.friend1} where I pay 60 percent and they pay 40 percent"
     )
     assert len(expense.users) == 2
     user_shares = {float(user.owed_share) for user in expense.users}
@@ -49,7 +54,7 @@ def test_split_with_one_person():
     # Test exact amounts
     print("\nTesting exact amounts...")
     expense = create_and_verify_expense(
-        "Split $50 with Ben where I pay $30 and he pays $20"
+        f"Split $50 with {TestConfig.friend1} where I pay $30 and they pay $20"
     )
     assert len(expense.users) == 2
     user_shares = {float(user.owed_share) for user in expense.users}
@@ -63,7 +68,7 @@ def test_split_with_three_others():
     # Test equal split
     print("\nTesting equal split...")
     expense = create_and_verify_expense(
-        "Split $100 evenly between me, Ben, and Albert"
+        f"Split $100 evenly between me, {TestConfig.friend1}, and {TestConfig.friend2}"
     )
     assert len(expense.users) == 3
     # Check that shares are either 33.33 or 33.34 and sum to 100
@@ -74,7 +79,7 @@ def test_split_with_three_others():
     # Test percentage split
     print("\nTesting percentage split...")
     expense = create_and_verify_expense(
-        "Split $200 where I pay 40%, Ben pays 35%, and Albert pays 25%"
+        f"Split $200 where I pay 40%, {TestConfig.friend1} pays 35%, and {TestConfig.friend2} pays 25%"
     )
     assert len(expense.users) == 3
     shares = {float(user.owed_share) for user in expense.users}
@@ -83,7 +88,7 @@ def test_split_with_three_others():
     # Test exact amounts
     print("\nTesting exact amounts...")
     expense = create_and_verify_expense(
-        "Split $150 where I pay $50, Ben pays $50, and Albert pays $50"
+        f"Split $150 where I pay $50, {TestConfig.friend1} pays $50, and {TestConfig.friend2} pays $50"
     )
     assert len(expense.users) == 3
     assert all(float(user.owed_share) == 50.0 for user in expense.users)
@@ -92,7 +97,15 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run Splitwise integration tests')
     parser.add_argument('--test-type', choices=['one', 'multi', 'all'], 
                       default='all', help='Type of tests to run: one person, multiple people, or all')
+    parser.add_argument('--friend1', required=True,
+                      help='Name of first friend to test with')
+    parser.add_argument('--friend2', required=True,
+                      help='Name of second friend to test with')
     args = parser.parse_args()
+    
+    # Store friend names in TestConfig
+    TestConfig.friend1 = args.friend1
+    TestConfig.friend2 = args.friend2
     
     # Build pytest arguments based on command line choice
     pytest_args = [__file__, '-v']
@@ -103,4 +116,5 @@ if __name__ == '__main__':
     # For 'all', we don't need to add any markers
     
     print(f"\nRunning {'all' if args.test_type == 'all' else args.test_type + ' person'} tests...")
+    print(f"Testing with friends: {TestConfig.friend1} and {TestConfig.friend2}")
     pytest.main(pytest_args)
