@@ -7,14 +7,11 @@ from splitwise.expense import Expense
 from splitwise.user import ExpenseUser
 from dotenv import load_dotenv
 
-load_dotenv()  # Load environment variables
+load_dotenv()
 
 app = Flask(__name__)
 
-# Initialize OpenAI client
 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
-
-# Initialize Splitwise client
 splitwise = Splitwise(
     consumer_key=os.getenv('SPLITWISE_CONSUMER_KEY'),
     consumer_secret=os.getenv('SPLITWISE_CONSUMER_SECRET'),
@@ -82,7 +79,7 @@ def parse_transaction_with_openai(transaction_text, friends_data):
     try:
         print("Sending request to OpenAI API...")
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that converts natural language transaction descriptions to structured Splitwise data. You have access to the user's friends list and can map names to correct user IDs."},
                 {"role": "user", "content": prompt}
@@ -119,35 +116,45 @@ def create_splitwise_expense(parsed_data):
         users = []
         total_amount = float(parsed_data['amount'])
         
-        # For equal splits, make sure payer is included in split_with if not already there
-        if parsed_data['split_type'] == 'equal':
-            # Get all unique user IDs
-            user_ids = {user['user_id'] for user in parsed_data['split_with']}
-            
-            # Add payer if not in split_with
-            if parsed_data['paid_by']['user_id'] not in user_ids:
-                parsed_data['split_with'].append(parsed_data['paid_by'])
+        # Get list of unique users excluding the payer
+        split_users = [
+            user for user in parsed_data['split_with'] 
+            if user['user_id'] != parsed_data['paid_by']['user_id']
+        ]
         
-        # Calculate shares based on split type
+        # Calculate total number of users (including payer)
+        total_users = len(split_users) + 1
+        
         if parsed_data['split_type'] == 'equal':
-            total_users = len(parsed_data['split_with'])  # Total number of users in the split
-            share_per_person = total_amount / total_users
+            # Round share to 2 decimal places
+            share_per_person = round(total_amount / total_users, 2)
+            
+            # Adjust last share to account for rounding errors
+            total_shares = share_per_person * (total_users - 1)
+            last_share = round(total_amount - total_shares, 2)
             
             # Add the person who paid
             payer = ExpenseUser()
             payer.setId(parsed_data['paid_by']['user_id'])
             payer.setPaidShare(str(total_amount))
-            payer.setOwedShare(str(share_per_person))
+            payer.setOwedShare(str(share_per_person))  # Payer gets the regular share
             users.append(payer)
             
-            # Add all other users
-            for user_data in parsed_data['split_with']:
-                if user_data['user_id'] != parsed_data['paid_by']['user_id']:
-                    user = ExpenseUser()
-                    user.setId(user_data['user_id'])
-                    user.setPaidShare('0.00')
-                    user.setOwedShare(str(share_per_person))
-                    users.append(user)
+            # Add all other users except the last one
+            for user_data in split_users[:-1]:
+                user = ExpenseUser()
+                user.setId(user_data['user_id'])
+                user.setPaidShare('0.00')
+                user.setOwedShare(str(share_per_person))
+                users.append(user)
+            
+            # Add the last user with adjusted share if there are other users
+            if split_users:
+                last_user = ExpenseUser()
+                last_user.setId(split_users[-1]['user_id'])
+                last_user.setPaidShare('0.00')
+                last_user.setOwedShare(str(last_share))
+                users.append(last_user)
         
         elif parsed_data['split_type'] == 'percentage':
             # Add the person who paid
@@ -157,18 +164,17 @@ def create_splitwise_expense(parsed_data):
             payer_split = next((u['split_value'] for u in parsed_data['split_with'] 
                               if u['user_id'] == parsed_data['paid_by']['user_id']), None)
             if payer_split is None:
-                payer_split = 100 - sum(u['split_value'] for u in parsed_data['split_with'])
-            payer.setOwedShare(str((payer_split / 100.0) * total_amount))
+                payer_split = 100 - sum(u['split_value'] for u in split_users)
+            payer.setOwedShare(str(round((payer_split / 100.0) * total_amount, 2)))
             users.append(payer)
             
             # Add all other users
-            for user_data in parsed_data['split_with']:
-                if user_data['user_id'] != parsed_data['paid_by']['user_id']:
-                    user = ExpenseUser()
-                    user.setId(user_data['user_id'])
-                    user.setPaidShare('0.00')
-                    user.setOwedShare(str((user_data['split_value'] / 100.0) * total_amount))
-                    users.append(user)
+            for user_data in split_users:
+                user = ExpenseUser()
+                user.setId(user_data['user_id'])
+                user.setPaidShare('0.00')
+                user.setOwedShare(str(round((user_data['split_value'] / 100.0) * total_amount, 2)))
+                users.append(user)
         
         else:  # exact amounts
             # Add the person who paid
@@ -178,18 +184,17 @@ def create_splitwise_expense(parsed_data):
             payer_split = next((u['split_value'] for u in parsed_data['split_with'] 
                               if u['user_id'] == parsed_data['paid_by']['user_id']), None)
             if payer_split is None:
-                payer_split = total_amount - sum(u['split_value'] for u in parsed_data['split_with'])
+                payer_split = round(total_amount - sum(u['split_value'] for u in split_users), 2)
             payer.setOwedShare(str(payer_split))
             users.append(payer)
             
             # Add all other users
-            for user_data in parsed_data['split_with']:
-                if user_data['user_id'] != parsed_data['paid_by']['user_id']:
-                    user = ExpenseUser()
-                    user.setId(user_data['user_id'])
-                    user.setPaidShare('0.00')
-                    user.setOwedShare(str(user_data['split_value']))
-                    users.append(user)
+            for user_data in split_users:
+                user = ExpenseUser()
+                user.setId(user_data['user_id'])
+                user.setPaidShare('0.00')
+                user.setOwedShare(str(round(user_data['split_value'], 2)))
+                users.append(user)
 
         # Create the expense
         expense = Expense()
@@ -202,8 +207,8 @@ def create_splitwise_expense(parsed_data):
         print(f"Cost: {str(total_amount)}")
         print(f"Description: {parsed_data['description']}")
         print(f"Split type: {parsed_data['split_type']}")
-        print(f"Total users in split: {len(parsed_data['split_with'])}")
-        print(f"Share per person: {total_amount / len(parsed_data['split_with'])}")
+        print(f"Total users in split: {total_users}")
+        print(f"Share per person: {total_amount / total_users}")
         print(f"Number of expense users: {len(users)}")
         for u in users:
             print(f"User {u.getId()}: Paid {u.getPaidShare()}, Owes {u.getOwedShare()}")
@@ -215,55 +220,109 @@ def create_splitwise_expense(parsed_data):
                 error_list = errors.getErrors()
                 if error_list:
                     for error in error_list:
-                        print(f"Detailed Error: {error}")
+                        if hasattr(error, 'getMessage'):
+                            print(f"Detailed Error: {error.getMessage()}")
+                        else:
+                            print(f"Detailed Error: {str(error)}")
                 else:
                     print("No detailed errors available")
+            elif hasattr(errors, 'getMessage'):
+                print(f"Error Message: {errors.getMessage()}")
             return None
         return created_expense
     except Exception as e:
         print(f"Error creating Splitwise expense: {str(e)}")
         print(f"Error type: {type(e)}")
+        import traceback
+        print("Traceback:")
+        traceback.print_exc()
+        return None
+
+def delete_expense(expense_id):
+    """Delete a Splitwise expense by ID."""
+    try:
+        return splitwise.deleteExpense(expense_id)
+    except Exception as e:
+        print(f"Error deleting expense: {str(e)}")
+        return None
+
+def process_transaction(message):
+    """Process a transaction message and return the created expense."""
+    try:
+        # Get current user and friends list from Splitwise
+        current_user = splitwise.getCurrentUser()
+        friends = splitwise.getFriends()
+        
+        # Prepare friends data for OpenAI
+        friends_data = {
+            'current_user': {
+                'id': current_user.id,
+                'name': f"{current_user.first_name} {current_user.last_name}"
+            },
+            'friends': [
+                {
+                    'id': friend.id,
+                    'name': f"{friend.first_name} {friend.last_name}",
+                    'email': friend.email
+                }
+                for friend in friends
+            ]
+        }
+        
+        # Parse transaction with OpenAI
+        parsed_data = parse_transaction_with_openai(message, friends_data)
+        if not parsed_data:
+            return None
+            
+        # Create expense in Splitwise
+        return create_splitwise_expense(parsed_data)
+    except Exception as e:
+        print(f"Error processing transaction: {str(e)}")
         return None
 
 @app.route('/addtransaction', methods=['POST'])
 def add_transaction():
-    print("Raw request data:", request.get_data())
-    print("Request headers:", dict(request.headers))
-    transaction_data = request.json
-    print("Parsed JSON data:", transaction_data)
-    transaction_text = transaction_data.get('message')
-    print("Extracted message:", transaction_text)
-    
-    if not transaction_text:
-        print("Transaction text is empty or None")
-        return jsonify({"status": "error", "message": "No transaction text provided"}), 400
-    
     try:
-        # Get friends data for context
-        friends_data = get_friends_data()
+        data = request.get_json()
+        print("Parsed JSON data:", data)
         
-        # Parse the transaction text using OpenAI with friends context
-        parsed_data = parse_transaction_with_openai(transaction_text, friends_data)
-        if not parsed_data:
-            return jsonify({"status": "error", "message": "Failed to parse transaction"}), 400
+        if not data or 'message' not in data:
+            return jsonify({'error': 'No message provided'}), 400
+            
+        message = data['message']
+        print("Extracted message:", message)
         
-        # Create the expense in Splitwise
-        expense = create_splitwise_expense(parsed_data)
+        expense = process_transaction(message)
         if not expense:
-            return jsonify({"status": "error", "message": "Failed to create Splitwise expense"}), 400
-        
-        return jsonify({
-            "status": "success",
-            "message": "Transaction added to Splitwise",
-            "expense_id": expense.id,
-            "parsed_data": parsed_data  # Include parsed data for verification
-        }), 200
+            return jsonify({'error': 'Failed to create expense'}), 400
+            
+        return jsonify({'success': True, 'expense_id': expense.id}), 200
         
     except Exception as e:
-        return jsonify({
-            "status": "error",
-            "message": f"Error processing transaction: {str(e)}"
-        }), 500
+        print(f"Error in add_transaction: {str(e)}")
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/deleteransaction', methods=['POST'])
+def delete_transaction():
+    try:
+        data = request.get_json()
+        print("Parsed JSON data:", data)
+        
+        if not data or 'expense_id' not in data:
+            return jsonify({'error': 'No expense ID provided'}), 400
+            
+        expense_id = data['expense_id']
+        print("Extracted expense ID:", expense_id)
+        
+        result = delete_expense(expense_id)
+        if not result:
+            return jsonify({'error': 'Failed to delete expense'}), 400
+            
+        return jsonify({'success': True}), 200
+        
+    except Exception as e:
+        print(f"Error in delete_transaction: {str(e)}")
+        return jsonify({'error': str(e)}), 400
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5001)
+    app.run(debug=True)
