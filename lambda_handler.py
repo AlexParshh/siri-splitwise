@@ -1,6 +1,5 @@
 import os
 import json
-from flask import Flask, request, jsonify
 from openai import OpenAI
 from splitwise import Splitwise
 from splitwise.expense import Expense
@@ -8,8 +7,6 @@ from splitwise.user import ExpenseUser
 from dotenv import load_dotenv
 
 load_dotenv()
-
-app = Flask(__name__)
 
 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 splitwise = Splitwise(
@@ -52,6 +49,13 @@ def parse_transaction_with_openai(transaction_text, friends_data):
     
     Available friends:
     {friends_context}
+    
+    Important rules:
+    1. Each user should appear exactly once in the split
+    2. Use the exact friend names and IDs from the list above - match them carefully
+    3. For the current user's share, include them in split_with only if their share is explicitly mentioned
+    4. Ensure all percentages add up to 100% or all amounts add up to the total
+    5. If a friend's name in the message closely matches a name from the list above, use that friend's exact name and ID
     
     Transaction text: {transaction_text}
     
@@ -280,49 +284,77 @@ def process_transaction(message):
         print(f"Error processing transaction: {str(e)}")
         return None
 
-@app.route('/addtransaction', methods=['POST'])
-def add_transaction():
-    try:
-        data = request.get_json()
-        print("Parsed JSON data:", data)
-        
-        if not data or 'message' not in data:
-            return jsonify({'error': 'No message provided'}), 400
-            
-        message = data['message']
-        print("Extracted message:", message)
-        
-        expense = process_transaction(message)
-        if not expense:
-            return jsonify({'error': 'Failed to create expense'}), 400
-            
-        return jsonify({'success': True, 'expense_id': expense.id}), 200
-        
-    except Exception as e:
-        print(f"Error in add_transaction: {str(e)}")
-        return jsonify({'error': str(e)}), 400
+def lambda_handler(event, context):
+    """
+    AWS Lambda handler function that processes API Gateway requests
+    
+    Args:
+        event (dict): API Gateway Lambda Proxy Input Format
+        context (object): Lambda Context runtime methods and attributes
 
-@app.route('/deleteransaction', methods=['POST'])
-def delete_transaction():
+    Returns:
+        dict: API Gateway Lambda Proxy Output Format
+    """
     try:
-        data = request.get_json()
-        print("Parsed JSON data:", data)
-        
-        if not data or 'expense_id' not in data:
-            return jsonify({'error': 'No expense ID provided'}), 400
-            
-        expense_id = data['expense_id']
-        print("Extracted expense ID:", expense_id)
-        
-        result = delete_expense(expense_id)
-        if not result:
-            return jsonify({'error': 'Failed to delete expense'}), 400
-            
-        return jsonify({'success': True}), 200
-        
-    except Exception as e:
-        print(f"Error in delete_transaction: {str(e)}")
-        return jsonify({'error': str(e)}), 400
+        # Extract HTTP method and body from the event
+        http_method = event.get('httpMethod')
+        body = json.loads(event.get('body', '{}'))
 
-if __name__ == '__main__':
-    app.run(debug=True)
+        if http_method == 'POST':
+            if 'message' not in body:
+                return {
+                    'statusCode': 400,
+                    'body': json.dumps({'error': 'message field is required'})
+                }
+                
+            # Process the transaction
+            expense = process_transaction(body['message'])
+            
+            if expense is None:
+                return {
+                    'statusCode': 400,
+                    'body': json.dumps({'error': 'Failed to create expense'})
+                }
+            
+            # Convert Splitwise expense object to dictionary
+            response_data = {
+                'success': True,
+                'expense_id': expense.getId(),
+                'description': expense.getDescription(),
+                'cost': expense.getCost()
+            }
+            
+            return {
+                'statusCode': 200,
+                'body': json.dumps(response_data)
+            }
+            
+        elif http_method == 'DELETE':
+            if 'expense_id' not in body:
+                return {
+                    'statusCode': 400,
+                    'body': json.dumps({'error': 'expense_id field is required'})
+                }
+                
+            # Delete the expense
+            delete_expense(body['expense_id'])
+            
+            return {
+                'statusCode': 200,
+                'body': json.dumps({'message': 'Expense deleted successfully'})
+            }
+            
+        else:
+            return {
+                'statusCode': 405,
+                'body': json.dumps({'error': 'Method not allowed'})
+            }
+            
+    except Exception as e:
+        return {
+            'statusCode': 500,
+            'body': json.dumps({
+                'error': 'Internal server error',
+                'message': str(e)
+            })
+        }

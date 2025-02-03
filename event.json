@@ -1,0 +1,4 @@
+{
+  "httpMethod": "POST",
+  "body": "{\"message\": \"Dinner with Ben for $50, I paid and split it evenly\"}"
+}
