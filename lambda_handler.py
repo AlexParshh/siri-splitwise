@@ -82,7 +82,7 @@ def parse_transaction_with_openai(transaction_text, friends_data):
     try:
         print("Sending request to OpenAI API...")
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that converts natural language transaction descriptions to structured Splitwise data. You have access to the user's friends list and can map names to correct user IDs. Only include friends that are explicitly mentioned in the transaction text."},
                 {"role": "user", "content": prompt}

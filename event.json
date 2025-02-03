@@ -1,4 +1,4 @@
 {
   "httpMethod": "POST",
-  "body": "{\"message\": \"Dinner with Ben and Albert for $50, I paid and split it evenly\"}"
+  "body": "{\"message\": \"Dinner with Ben and myself. My meal was 20$ and bens was 30$. Tax was 5$ and tip was 10$. We split the tax and tip evenly but not the mains. The total was 65$. \"}"
 }
