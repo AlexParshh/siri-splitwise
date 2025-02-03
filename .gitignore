@@ -30,3 +30,4 @@ Thumbs.db
 # Deployment
 template.yaml
 .aws-sam/
+samconfig.toml
