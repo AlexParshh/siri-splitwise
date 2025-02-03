@@ -51,11 +51,10 @@ def parse_transaction_with_openai(transaction_text, friends_data):
     {friends_context}
     
     Important rules:
-    1. Each user should appear exactly once in the split
-    2. Use the exact friend names and IDs from the list above - match them carefully
-    3. For the current user's share, include them in split_with only if their share is explicitly mentioned
-    4. Ensure all percentages add up to 100% or all amounts add up to the total
-    5. If a friend's name in the message closely matches a name from the list above, use that friend's exact name and ID
+    1. Only include friends that are explicitly mentioned in the transaction text
+    2. Do not assume all friends should be included
+    3. If a specific friend is mentioned (e.g., "with Ben"), only include that friend
+    4. Names can be partial matches (e.g., "Ben" matches "Benjamin")
     
     Transaction text: {transaction_text}
     
@@ -85,7 +84,7 @@ def parse_transaction_with_openai(transaction_text, friends_data):
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant that converts natural language transaction descriptions to structured Splitwise data. You have access to the user's friends list and can map names to correct user IDs."},
+                {"role": "system", "content": "You are a helpful assistant that converts natural language transaction descriptions to structured Splitwise data. You have access to the user's friends list and can map names to correct user IDs. Only include friends that are explicitly mentioned in the transaction text."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0,
